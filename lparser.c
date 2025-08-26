@@ -11,6 +11,8 @@
 
 
 #include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "lua.h"
@@ -2141,6 +2143,7 @@ LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
                        Dyndata *dyd, const char *name, int firstchar) {
   LexState lexstate;
   FuncState funcstate;
+  char* showOpcodes = getenv("LUA_OPCODES");
   LClosure *cl = luaF_newLclosure(L, 1);  /* create main closure */
   setclLvalue2s(L, L->top.p, cl);  /* anchor it (to avoid being collected) */
   luaD_inctop(L);
@@ -2160,6 +2163,12 @@ LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
   /* all scopes should be correctly finished */
   lua_assert(dyd->actvar.n == 0 && dyd->gt.n == 0 && dyd->label.n == 0);
   L->top.p--;  /* remove scanner's table */
+  if (showOpcodes) {
+    for (int i = 0; i < funcstate.pc; i++)
+      printf("%02X: %08X\n", i, funcstate.f->code[i]);
+    if (showOpcodes[0] == 'X')
+      exit(0);
+  }
   return cl;  /* closure is on the stack, too */
 }
 
