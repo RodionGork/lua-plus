@@ -532,6 +532,11 @@ static int llex (LexState *ls, SemInfo *seminfo) {
         if (check_next1(ls, '=')) return TK_NE;  /* '~=' */
         else return '~';
       }
+      case '!': {
+        next(ls);
+        if (check_next1(ls, '=')) return TK_NE;  /* '~=' */
+        else return TK_NOT;
+      }
       case ':': {
         next(ls);
         if (check_next1(ls, ':')) return TK_DBCOLON;  /* '::' */
@@ -585,7 +590,22 @@ static int llex (LexState *ls, SemInfo *seminfo) {
 }
 
 
+void luaX_record(LexState *ls, int on) {
+  if (on) {
+    ls->record[0] = ls->t;
+    ls->reccnt = 1;
+    ls->recptr = -1;
+  } else {
+    ls->recptr = -2;
+  }
+}
+
+
 void luaX_next (LexState *ls) {
+  if (ls->recptr >= 0 && ls->recptr < ls->reccnt) {
+    ls->t = ls->record[ls->recptr++];
+    return;
+  }
   ls->lastline = ls->linenumber;
   if (ls->lookahead.token != TK_EOS) {  /* is there a look-ahead token? */
     ls->t = ls->lookahead;  /* use this one */
@@ -593,6 +613,13 @@ void luaX_next (LexState *ls) {
   }
   else
     ls->t.token = llex(ls, &ls->t.seminfo);  /* read next token */
+  if (ls->recptr == -1) {
+    if (ls->reccnt == ls->recmax) {
+      int oldsize = ls->recmax;
+      ls->record = luaM_reallocvector(ls->L, ls->record, oldsize, ls->recmax = oldsize * 2, Token);
+    }
+    ls->record[ls->reccnt++] = ls->t;
+  }
 }
 
 
