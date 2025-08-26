@@ -1307,6 +1307,15 @@ static BinOpr getbinopr (int op) {
   }
 }
 
+static const int compound[] =
+  {'+', '-', '*', '%', '^', '/', TK_IDIV, '&', '|', '~', TK_SHL, TK_SHR, TK_CONCAT};
+
+static int iscompassign(int tkn) {
+  for (unsigned int i = 0; i < sizeof(compound) / sizeof(*compound); i++)
+    if (compound[i] == tkn)
+      return 1;
+  return 0;
+}
 
 /*
 ** Priority table for binary operators.
@@ -1487,6 +1496,30 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars) {
   storevartop(ls->fs, &lh->v);  /* default assignment */
 }
 
+static void amendassign (LexState *ls, struct LHS_assign *lh, BinOpr op) {
+  expdesc v1;
+  int prio;
+  check_condition(ls, vkisvar(lh->v.k), "syntax error");
+  check_readonly(ls, &lh->v);
+  check(ls, '=');
+  enterlevel(ls);
+  v1 = lh->v;
+  prio = 0;
+  while (op != OPR_NOBINOPR && priority[op].left > 0) {
+    expdesc v2;
+    BinOpr nextop;
+    int line = ls->linenumber;
+    luaX_next(ls);  /* skip operator */
+    luaK_infix(ls->fs, op, &v1);
+    nextop = subexpr(ls, &v2, prio);
+    luaK_posfix(ls->fs, op, &v1, &v2, line);
+    op = nextop;
+    prio = priority[op].right;
+  }
+  leavelevel(ls);
+  luaK_setoneret(ls->fs, &v1);
+  luaK_storevar(ls->fs, &lh->v, &v1);
+}
 
 static int cond (LexState *ls) {
   /* cond -> exp */
@@ -1937,6 +1970,12 @@ static void exprstat (LexState *ls) {
   if (ls->t.token == '=' || ls->t.token == ',') { /* stat -> assignment ? */
     v.prev = NULL;
     restassign(ls, &v, 1);
+  }
+  else if (iscompassign(ls->t.token)) {
+    BinOpr op = getbinopr(ls->t.token);
+    luaX_next(ls);
+    v.prev = NULL;
+    amendassign(ls, &v, op);
   }
   else {  /* stat -> func */
     Instruction *inst;
