@@ -1,5 +1,8 @@
 # Lua-plus
 
+_**Note: this attempt tried to manipulate parsing without lookback but only
+works for simple variables**_
+
 This is the clone of the [official **Lua** repo](https://github.com/lua/lua), with an attempt to make small additions to
 make the language bit more convenient to programmers with experience from other languages.
 
