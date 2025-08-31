@@ -1032,6 +1032,15 @@ static void setvararg (FuncState *fs, int nparams) {
 }
 
 
+static void typehint(LexState *ls) {
+  if (testnext(ls, ':')) {
+    if (ls->t.token != TK_NAME)
+      luaX_syntaxerror(ls, "type hint expected after colon");
+    else
+      luaX_next(ls);
+  }
+}
+
 static void parlist (LexState *ls) {
   /* parlist -> [ {NAME ','} (NAME | '...') ] */
   FuncState *fs = ls->fs;
@@ -1053,6 +1062,7 @@ static void parlist (LexState *ls) {
         }
         default: luaX_syntaxerror(ls, "<name> or '...' expected");
       }
+      typehint(ls);
     } while (!isvararg && testnext(ls, ','));
   }
   adjustlocalvars(ls, nparams);
@@ -1077,6 +1087,7 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
   }
   parlist(ls);
   checknext(ls, ')');
+  typehint(ls);
   statlist(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
   check_match(ls, TK_END, TK_FUNCTION, line);
@@ -1307,6 +1318,15 @@ static BinOpr getbinopr (int op) {
   }
 }
 
+static const int compound[] =
+  {'+', '-', '*', '%', '^', '/', TK_IDIV, '&', '|', '~', TK_SHL, TK_SHR, TK_CONCAT};
+
+static int iscompassign(int tkn) {
+  for (unsigned int i = 0; i < sizeof(compound) / sizeof(*compound); i++)
+    if (compound[i] == tkn)
+      return 1;
+  return 0;
+}
 
 /*
 ** Priority table for binary operators.
@@ -1337,6 +1357,7 @@ static const struct {
 static BinOpr subexpr (LexState *ls, expdesc *v, int limit) {
   BinOpr op;
   UnOpr uop;
+  int prio;
   enterlevel(ls);
   uop = getunopr(ls->t.token);
   if (uop != OPR_NOUNOPR) {  /* prefix (unary) operator? */
@@ -1348,6 +1369,7 @@ static BinOpr subexpr (LexState *ls, expdesc *v, int limit) {
   else simpleexp(ls, v);
   /* expand while operators have priorities higher than 'limit' */
   op = getbinopr(ls->t.token);
+  prio = limit >= 0 ? priority[op].right : 0;
   while (op != OPR_NOBINOPR && priority[op].left > limit) {
     expdesc v2;
     BinOpr nextop;
@@ -1355,9 +1377,10 @@ static BinOpr subexpr (LexState *ls, expdesc *v, int limit) {
     luaX_next(ls);  /* skip operator */
     luaK_infix(ls->fs, op, v);
     /* read sub-expression with higher priority */
-    nextop = subexpr(ls, &v2, priority[op].right);
+    nextop = subexpr(ls, &v2, prio);
     luaK_posfix(ls->fs, op, v, &v2, line);
     op = nextop;
+    prio = priority[op].right;
   }
   leavelevel(ls);
   return op;  /* return first untreated operator */
@@ -1487,6 +1510,20 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars) {
   storevartop(ls->fs, &lh->v);  /* default assignment */
 }
 
+static void amendassign (LexState *ls, struct LHS_assign *lh) {
+  expdesc v;
+  Token opToken = ls->t;
+  luaX_next(ls);
+  check(ls, '=');
+  check_condition(ls, vkisvar(lh->v.k), "syntax error");
+  check_readonly(ls, &lh->v);
+  ls->t = ls->record[0];
+  ls->recptr = 1;
+  ls->record[ls->reccnt-1] = opToken;
+  subexpr(ls, &v, -1);
+  luaK_setoneret(ls->fs, &v);
+  luaK_storevar(ls->fs, &lh->v, &v);
+}
 
 static int cond (LexState *ls) {
   /* cond -> exp */
@@ -1933,10 +1970,16 @@ static void exprstat (LexState *ls) {
   /* stat -> func | assignment */
   FuncState *fs = ls->fs;
   struct LHS_assign v;
+  luaX_record(ls, 1);
   suffixedexp(ls, &v.v);
+  luaX_record(ls, 0);
   if (ls->t.token == '=' || ls->t.token == ',') { /* stat -> assignment ? */
     v.prev = NULL;
     restassign(ls, &v, 1);
+  }
+  else if (iscompassign(ls->t.token)) {
+    v.prev = NULL;
+    amendassign(ls, &v);
   }
   else {  /* stat -> func */
     Instruction *inst;
@@ -2103,6 +2146,9 @@ LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
   LexState lexstate;
   FuncState funcstate;
   LClosure *cl = luaF_newLclosure(L, 1);  /* create main closure */
+  lexstate.reccnt = 0;
+  lexstate.L = L;
+  lexstate.record = luaM_newvector(L, lexstate.recmax=8, Token);
   setclLvalue2s(L, L->top.p, cl);  /* anchor it (to avoid being collected) */
   luaD_inctop(L);
   lexstate.h = luaH_new(L);  /* create table for scanner */
